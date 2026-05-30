@@ -1,0 +1,107 @@
+# ── Shared environment ─────────────────────────────────────────────────────
+x-common-env: &common-env
+  GEMINI_API_KEY:       ${GEMINI_API_KEY}
+  GEMINI_MODEL:         ${GEMINI_MODEL:-gemini-2.0-flash}
+  GEMINI_MODEL_FAST:    ${GEMINI_MODEL_FAST:-gemini-2.0-flash}
+  GEMINI_MODEL_GEN:     ${GEMINI_MODEL_GEN:-gemini-2.0-flash}
+  SERVER_HOST:          0.0.0.0
+  SERVER_PORT:          8765
+  MAX_WORKERS:          ${MAX_WORKERS:-5}
+  QUEUE_MAX_SIZE:       ${QUEUE_MAX_SIZE:-100}
+  QDRANT_HOST:          qdrant           # Docker service name
+  QDRANT_PORT:          6333
+  QDRANT_GRPC_PORT:     6334
+  QDRANT_API_KEY:       ${QDRANT_API_KEY:-}
+  QDRANT_COLLECTION:    ${QDRANT_COLLECTION:-company_policies}
+  EMBEDDING_MODEL:      ${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+  VECTOR_SIZE:          ${VECTOR_SIZE:-384}
+  TOP_K_RESULTS:        ${TOP_K_RESULTS:-5}
+  CHUNK_SIZE:           ${CHUNK_SIZE:-800}
+  CHUNK_OVERLAP:        ${CHUNK_OVERLAP:-150}
+  MIN_RELEVANCE:        ${MIN_RELEVANCE:-0.25}
+  WHISPER_MODEL:        ${WHISPER_MODEL:-base}
+  TTS_ENABLED:          ${TTS_ENABLED:-true}
+  TTS_VOICE_RATE:       ${TTS_VOICE_RATE:-175}
+  POLICIES_DIR:         /app/policies
+
+services:
+
+  # ── Qdrant vector database ───────────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: policy-agent-qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"     # REST API
+      - "${QDRANT_GRPC_PORT:-6334}:6334" # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+    healthcheck:
+      test:     ["CMD-SHELL", "curl -sf http://localhost:6333/healthz || exit 1"]
+      interval: 10s
+      timeout:  5s
+      retries:  5
+      start_period: 10s
+
+  # ── Policy Agent server ──────────────────────────────────────────────────
+  server:
+    build:
+      context:    .
+      dockerfile: Dockerfile
+      target:     runtime
+    image: policy-agent:latest
+    container_name: policy-agent-server
+    restart: unless-stopped
+    command: python main.py server --log-level INFO
+    environment:
+      <<: *common-env
+    ports:
+      - "${SERVER_PORT:-8765}:8765"
+    volumes:
+      - ./policies:/app/policies:ro
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test:        ["CMD", "python", "healthcheck.py"]
+      interval:    30s
+      timeout:     10s
+      retries:     3
+      start_period: 40s
+
+  # ── One-shot ingestion job ───────────────────────────────────────────────
+  # Usage:  docker compose run --rm ingest
+  ingest:
+    image: policy-agent:latest
+    container_name: policy-agent-ingest
+    profiles: ["tools"]
+    command: python main.py ingest --dir /app/policies
+    environment:
+      <<: *common-env
+    volumes:
+      - ./policies:/app/policies:ro
+    depends_on:
+      qdrant:
+        condition: service_healthy
+
+  # ── Admin CLI ────────────────────────────────────────────────────────────
+  # Usage:  docker compose run --rm admin stats
+  admin:
+    image: policy-agent:latest
+    container_name: policy-agent-admin
+    profiles: ["tools"]
+    entrypoint: ["python", "admin.py"]
+    command:    ["stats"]
+    environment:
+      <<: *common-env
+    volumes:
+      - ./policies:/app/policies:ro
+    depends_on:
+      qdrant:
+        condition: service_healthy
+
+volumes:
+  qdrant_data:
+    driver: local

@@ -1,0 +1,16 @@
+.venv
+venv
+__pycache__
+.git
+.gitignore
+*.pyc
+*.pyo
+*.pyd
+.env
+node_modules
+cache
+models
+recordings
+chroma_db
+dist
+build
