@@ -101,26 +101,54 @@ User query: {query}"""
 # Node 2 — retrieve_context
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _keyword_query(text: str) -> str:
+    """Strip stop words and return key terms for a fallback keyword search."""
+    _STOP = {
+        "what", "is", "are", "the", "a", "an", "how", "do", "does", "can",
+        "i", "we", "you", "our", "my", "for", "to", "in", "on", "of", "and",
+        "or", "about", "tell", "me", "please", "give", "show", "list",
+    }
+    words = re.findall(r'\b[a-zA-Z]{3,}\b', text.lower())
+    return " ".join(w for w in words if w not in _STOP)[:200]
+
+
 async def retrieve_context(
     state: PolicyAgentState,
     vector_store,
 ) -> Dict[str, Any]:
-    """Semantic search against Qdrant. Broadens query on retry."""
+    """Multi-query semantic search: unions results from original + refined queries."""
     attempts = state.get("retrieval_attempts", 0)
-    query    = state.get("refined_query") or state.get("query", "")
+    original = state.get("query", "")
+    refined  = state.get("refined_query") or original
 
+    # Always search with both phrasings; on retry add a keyword-only variant.
+    queries: List[str] = list(dict.fromkeys([refined, original]))
     if attempts > 0:
-        original = state.get("query", "")
-        if original != query:
-            query = f"{original} {query}"
+        kw = _keyword_query(original)
+        if kw and kw not in queries:
+            queries.append(kw)
 
     logger.info(
-        f"[{state['request_id']}] Retrieving (attempt {attempts + 1}): {query[:80]!r}"
+        f"[{state['request_id']}] Retrieving (attempt {attempts + 1}) "
+        f"with {len(queries)} queries"
     )
 
-    chunks = vector_store.search(query, top_k=config.TOP_K_RESULTS)
-    logger.info(f"[{state['request_id']}] Retrieved {len(chunks)} chunks")
+    # Union results across all query variants; keep best relevance per chunk.
+    seen: dict = {}
+    for q in queries:
+        for chunk in vector_store.search(q, top_k=config.TOP_K_RESULTS):
+            cid = chunk.get("chunk_id", chunk.get("text", "")[:60])
+            if cid not in seen or chunk.get("relevance", 0) > seen[cid].get("relevance", 0):
+                seen[cid] = chunk
 
+    chunks = sorted(seen.values(), key=lambda c: c.get("relevance", 0), reverse=True)
+    # Return up to 2× TOP_K so generation has a richer context pool.
+    chunks = chunks[: config.TOP_K_RESULTS * 2]
+
+    logger.info(
+        f"[{state['request_id']}] Retrieved {len(chunks)} unique chunks "
+        f"from {len(queries)} queries"
+    )
     return {
         "context_chunks":     chunks,
         "retrieval_attempts": attempts + 1,
@@ -131,7 +159,7 @@ async def retrieve_context(
 # Node 3 — check_relevance
 # ═══════════════════════════════════════════════════════════════════════════
 
-RELEVANCE_THRESHOLD = 0.30
+RELEVANCE_THRESHOLD = 0.25
 
 
 async def check_relevance(state: PolicyAgentState) -> Dict[str, Any]:

@@ -25,25 +25,52 @@ logger = logging.getLogger("loaders")
 # ── Chunking helper ────────────────────────────────────────────────────────
 
 def _chunk_text(text: str, chunk_size: int = 800, overlap: int = 150) -> List[str]:
-    """Split on word boundaries with overlap."""
+    """Split on sentence boundaries; overlap by retaining trailing words."""
     text = text.strip()
     if not text:
         return []
 
-    words = text.split()
+    # Prefer sentence splits; fall back to paragraphs, then the whole text.
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    sentences = [s.strip() for s in sentences if s.strip()]
+    if not sentences:
+        sentences = [p.strip() for p in re.split(r'\n{2,}', text) if p.strip()]
+    if not sentences:
+        sentences = [text]
+
     chunks: List[str] = []
-    start = 0
+    current_words: List[str] = []
 
-    while start < len(words):
-        end = start + chunk_size
-        chunk = " ".join(words[start:end])
-        if chunk.strip():
-            chunks.append(chunk)
-        if end >= len(words):
-            break
-        start = end - overlap
+    for sent in sentences:
+        sent_words = sent.split()
+        if not sent_words:
+            continue
 
-    return chunks
+        # A single sentence longer than chunk_size: hard-split by words.
+        if len(sent_words) > chunk_size:
+            if current_words:
+                chunks.append(" ".join(current_words))
+                current_words = []
+            start = 0
+            while start < len(sent_words):
+                end = start + chunk_size
+                chunks.append(" ".join(sent_words[start:end]))
+                if end >= len(sent_words):
+                    break
+                start = end - overlap
+            continue
+
+        if len(current_words) + len(sent_words) > chunk_size and current_words:
+            chunks.append(" ".join(current_words))
+            # Seed next chunk with the last `overlap` words for continuity.
+            current_words = current_words[-overlap:]
+
+        current_words.extend(sent_words)
+
+    if current_words:
+        chunks.append(" ".join(current_words))
+
+    return [c for c in chunks if c.strip()]
 
 
 def _chunk_id(source: str, index: int) -> str:

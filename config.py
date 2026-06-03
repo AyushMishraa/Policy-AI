@@ -30,10 +30,10 @@ class Config:
     VECTOR_SIZE:      int = int(os.getenv("VECTOR_SIZE", "384"))   # all-MiniLM-L6-v2 = 384
 
     # ── RAG ────────────────────────────────────────────────────────────────
-    TOP_K_RESULTS:   int   = int(os.getenv("TOP_K_RESULTS",  "5"))
-    CHUNK_SIZE:      int   = int(os.getenv("CHUNK_SIZE",     "800"))
-    CHUNK_OVERLAP:   int   = int(os.getenv("CHUNK_OVERLAP",  "150"))
-    MIN_RELEVANCE:   float = float(os.getenv("MIN_RELEVANCE", "0.25"))
+    TOP_K_RESULTS:   int   = int(os.getenv("TOP_K_RESULTS",  "10"))
+    CHUNK_SIZE:      int   = int(os.getenv("CHUNK_SIZE",     "500"))
+    CHUNK_OVERLAP:   int   = int(os.getenv("CHUNK_OVERLAP",  "100"))
+    MIN_RELEVANCE:   float = float(os.getenv("MIN_RELEVANCE", "0.20"))
 
     # ── Voice ──────────────────────────────────────────────────────────────
     WHISPER_MODEL:   str  = os.getenv("WHISPER_MODEL",   "base")
